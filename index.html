@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <!-- No pinch zoom, no double-tap zoom, edge to edge on notched phones. -->
+    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#120f17">
+    <title>Sa Hating-Gabi</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Eczar:wght@500;700&family=Spectral:ital@0;1&family=Noto+Sans+Tagalog&display=swap" rel="stylesheet">
+    <style>
+      :root {
+        --night: #120f17; --smoke: #2b2430; --ember: #e2913f; --coal: #8f2a1c; --straw: #dcc79a; --moon: #b9c3cc;
+      }
+      html, body {
+        margin: 0; height: 100%; overflow: hidden; background: var(--night);
+        /* The page never scrolls, bounces, selects or zooms: every touch belongs to the game. */
+        touch-action: none; overscroll-behavior: none;
+        -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+      }
+      #unity-canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; background: var(--night); outline: none; touch-action: none; }
+
+      #loading {
+        position: fixed; inset: 0; display: grid; place-content: center; justify-items: center; gap: 14px; padding: 0 16px;
+        text-align: center; color: var(--straw); font-family: Spectral, Georgia, serif;
+        background: radial-gradient(ellipse at 50% 58%, #2a1d1a 0%, var(--night) 62%);
+        transition: opacity .9s ease;
+      }
+      #loading.done { opacity: 0; pointer-events: none; }
+      .baybayin {
+        font-family: "Noto Sans Tagalog", serif; font-size: clamp(1.6rem, 6vw, 2.4rem); color: var(--ember);
+        text-shadow: 0 0 18px rgba(226, 145, 63, .55); animation: torch 3.2s infinite steps(1, end);
+      }
+      h1 {
+        margin: 0; font-family: Eczar, Georgia, serif; font-weight: 700; font-size: clamp(2.6rem, 10vw, 4.6rem);
+        line-height: 1; letter-spacing: .01em; color: var(--straw);
+      }
+      .tagline { margin: 0; font-style: italic; color: var(--moon); font-size: 1rem; max-width: 34ch; }
+      /* A wick that burns along as the game loads. */
+      #wick { width: min(320px, 72vw); height: 2px; background: rgba(185, 195, 204, .15); margin-top: 10px; position: relative; }
+      #flame { position: absolute; inset: 0 auto 0 0; width: 0; background: linear-gradient(90deg, var(--coal), var(--ember)); transition: width .25s ease; }
+      #flame::after {
+        content: ""; position: absolute; right: -4px; top: -5px; width: 10px; height: 12px; border-radius: 50% 50% 45% 45%;
+        background: radial-gradient(circle at 50% 70%, #ffe2a8, var(--ember) 55%, transparent 72%); animation: torch 1.1s infinite;
+      }
+      #status { font-size: .9rem; color: var(--moon); min-height: 1.2em; }
+      @keyframes torch { 0%, 100% { opacity: 1 } 37% { opacity: .78 } 41% { opacity: .95 } 63% { opacity: .84 } }
+
+      /* Phones held upright: ask for landscape (the game is played sideways). */
+      #turn {
+        position: fixed; inset: 0; display: none; place-content: center; justify-items: center; gap: 10px; text-align: center; padding: 24px;
+        background: var(--night); color: var(--straw); font-family: Spectral, Georgia, serif; z-index: 10;
+      }
+      #turn b { font-family: Eczar, Georgia, serif; font-size: 1.6rem; font-weight: 500; }
+      @media (orientation: portrait) and (pointer: coarse) { #turn { display: grid; } }
+      @media (prefers-reduced-motion: reduce) { .baybayin, #flame::after { animation: none; } #loading { transition: none; } }
+    </style>
+  </head>
+  <body>
+    <canvas id="unity-canvas" tabindex="-1"></canvas>
+    <div id="loading">
+      <div class="baybayin" aria-hidden="true">ᜑᜆᜒᜅ᜔ᜄᜊᜒ</div>
+      <h1>Sa Hating-Gabi</h1>
+      <p class="tagline">One of your neighbours is not what they seem.</p>
+      <div id="wick"><div id="flame"></div></div>
+      <div id="status">Lighting the torches…</div>
+    </div>
+    <div id="turn"><b>Turn your phone sideways</b><span>Sa Hating-Gabi is played in landscape.</span></div>
+    <script>
+      // Browsers refuse pointer lock now and then (e.g. clicking again right after pressing Esc).
+      // Unity reports that as a fatal error with an alert; it isn't one, so swallow it first.
+      window.addEventListener("unhandledrejection", (e) => {
+        const reason = String(e.reason && (e.reason.message || e.reason));
+        if (/pointer ?lock|fullscreen|orientation/i.test(reason)) { e.preventDefault(); e.stopImmediatePropagation(); }
+      });
+
+      // Mobile: no pinch-zoom (iOS ignores user-scalable), no double-tap zoom, no pull-to-refresh or panning.
+      const stop = (e) => e.preventDefault();
+      ["gesturestart", "gesturechange", "gestureend"].forEach((t) => document.addEventListener(t, stop, { passive: false }));
+      document.addEventListener("touchmove", (e) => { if (e.touches.length > 1 || e.cancelable) e.preventDefault(); }, { passive: false });
+      let lastTap = 0;
+      document.addEventListener("touchend", (e) => { const now = Date.now(); if (now - lastTap < 350) e.preventDefault(); lastTap = now; }, { passive: false });
+      document.addEventListener("dblclick", stop, { passive: false });
+      document.addEventListener("contextmenu", stop);
+      window.addEventListener("wheel", (e) => { if (e.ctrlKey) e.preventDefault(); }, { passive: false });
+
+      // Music: the game asks for a track by name ("home", "morning", "night", "" for silence) and it
+      // crossfades. Browsers only allow sound after a tap or key press: the first one (caught before
+      // Unity sees it) starts playback. Plain audio elements, not Web Audio, so an iPhone's silent
+      // switch doesn't mute the music; iPhones ignore volume, so there tracks just switch.
+      window.shgMusic = (function () {
+        const tracks = { home: ["Homescreen.m4a", 0.55], morning: ["Morning.m4a", 0.4], night: ["Night.m4a", 0.45] };
+        const players = [new Audio(), new Audio()].map((el) => {
+          el.loop = true; el.preload = "auto"; el.setAttribute("playsinline", ""); return { el, key: "", timer: 0 };
+        });
+        let active = null, wanted = "", unlocked = false;
+        const url = (file) => "StreamingAssets/Music/" + file;
+        try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {}
+
+        function fade(p, to, seconds, done) {
+          clearInterval(p.timer);
+          const from = p.el.volume, start = performance.now();
+          p.timer = setInterval(() => {
+            const k = Math.min(1, (performance.now() - start) / (seconds * 1000));
+            try { p.el.volume = from + (to - from) * k; } catch (e) {}
+            if (k >= 1) { clearInterval(p.timer); if (done) done(); }
+          }, 50);
+        }
+
+        function apply() {
+          if (!unlocked || (active && active.key === wanted)) return;
+          const from = active, t = tracks[wanted];
+          if (from) { const old = from; fade(old, 0, 2, () => { if (active !== old) { old.el.pause(); old.key = ""; } }); }
+          active = null;
+          if (!t) return;
+          const next = players[0] === from ? players[1] : players[0];
+          next.key = wanted;
+          if (!next.el.src.endsWith(t[0])) next.el.src = url(t[0]);
+          try { next.el.currentTime = 0; } catch (e) {}
+          next.el.volume = 0;
+          next.el.play().catch(() => {});
+          fade(next, t[1], 2);
+          active = next;
+        }
+
+        function unlock() {
+          if (unlocked) return;
+          unlocked = true;
+          // Start both players inside this gesture (muted) so later track changes may play.
+          players.forEach((p) => {
+            if (!p.el.src) p.el.src = url("Homescreen.m4a");
+            p.el.muted = true;
+            p.el.play().then(() => { p.el.muted = false; if (!p.key) p.el.pause(); }).catch(() => { p.el.muted = false; });
+          });
+          apply();
+        }
+        // Capture phase on window: runs before Unity's own handlers can stop the event.
+        ["pointerdown", "touchstart", "touchend", "mousedown", "keydown"].forEach((t) => window.addEventListener(t, unlock, { capture: true, passive: true }));
+        document.addEventListener("visibilitychange", () => { if (!document.hidden && active) active.el.play().catch(() => {}); });
+        return { play(key) { if (key === wanted) return; wanted = key; apply(); } };
+      })();
+
+      // First tap on a phone: go fullscreen and hold landscape where the browser allows it.
+      const coarse = window.matchMedia("(pointer: coarse)").matches;
+      if (coarse) {
+        const immerse = () => {
+          const el = document.documentElement;
+          const req = el.requestFullscreen || el.webkitRequestFullscreen;
+          if (req && !document.fullscreenElement) {
+            Promise.resolve(req.call(el, { navigationUI: "hide" }))
+              .then(() => screen.orientation && screen.orientation.lock && screen.orientation.lock("landscape"))
+              .catch(() => {});
+          }
+        };
+        document.addEventListener("touchend", immerse, { passive: true });
+      }
+    </script>
+    <script src="Build/WebGL.loader.js?v=0.1.31-95decb7"></script>
+    <script>
+      const loading = document.getElementById("loading");
+      const flame = document.getElementById("flame");
+      createUnityInstance(document.getElementById("unity-canvas"), {
+        // ?v= stamps every file with the build version, so a browser never mixes files from two builds
+        // (GitHub Pages lets browsers cache for 10 minutes and the file names stay the same).
+        dataUrl: "Build/WebGL.data.unityweb?v=0.1.31-95decb7",
+        frameworkUrl: "Build/WebGL.framework.js.unityweb?v=0.1.31-95decb7",
+        codeUrl: "Build/WebGL.wasm.unityweb?v=0.1.31-95decb7",
+        streamingAssetsUrl: "StreamingAssets",
+        companyName: "Mulavex",
+        productName: "Sa Hating-Gabi",
+        productVersion: "0.1.31-95decb7",
+        // Phones: render at most 2x pixel density so the game stays smooth.
+        devicePixelRatio: Math.min(window.devicePixelRatio || 1, coarse ? 2 : 3),
+      }, (progress) => { flame.style.width = (progress * 100) + "%"; })
+        .then(() => { loading.classList.add("done"); setTimeout(() => loading.remove(), 1000); })
+        .catch((message) => { document.getElementById("status").textContent = "The game couldn't start: " + message; });
+    </script>
+  </body>
+</html>
